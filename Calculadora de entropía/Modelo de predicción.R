@@ -7,6 +7,9 @@ library(precrec)
 library(themis)
 library(DMwR2)
 library(ROSE)
+library(ROCR)
+library(ada)
+
 
 Dat<-read.delim("clipboard")
 head(Dat)
@@ -28,248 +31,154 @@ co_orig=ggplot(a1, aes(x = Malware, y = 1000, color=Malware)) +
   ggtitle("Datos originales")+labs(y = "")
 co_orig
 
-#  Sub-muestreo (Down)                                                                                                               #---------------------
-library(caret)
-set.seed(1437)
-down_train <- downSample(x = Dat1[, -5],y = factor(Dat1$Malware))
-table(down_train$Class)
-head(down_train)
-
-#Grafica de datos DOWN
-# -------------------------
-a2=data.frame(down_train[,5]);colnames(a2)<-c("Malware")
-co_down=ggplot(a2, aes(x = Malware, y = 1000, color=Malware)) + 
-  geom_jitter(shape = 1) + theme(axis.title.x=element_blank())+
-  ggtitle("Sub-muestreo (DOWN)")+labs(y = "")
-co_down
-
-#  Sobre-muestreo (Up)                                                                                                                        #---------------------
-set.seed(1437)
-up_train <- upSample(x = Dat1[, -5],y = factor(Dat1$Malware))                         
-table(up_train$Class) 
-head(up_train)
-
-# Grafica de datos UP
-# -------------------------
-a3=data.frame(up_train[,5]);colnames(a3)<-c("Malware")
-co_up=ggplot(a3, aes(x = Malware, y = 1000, color=Malware)) + 
-  geom_jitter(shape = 1)+ theme(axis.title.x=element_blank())+
-  ggtitle("Sobre-muestreo (UP)")+labs(y = "")
-co_up
 
 
-
-#  (ROSE)  
-library(ROSE)
-set.seed(1437)
-rose_train <- ROSE(Malware ~.,data  = Dat1)$data 
-table(rose_train$Malware) 
-head(rose_train)
-
-# Distribuci?n Datos ROSE
-# -------------------------
-a5=data.frame(rose_train[,5]);colnames(a5)<-c("Malware")
-co_ROSE=ggplot(a5, aes(x = Malware, y = 1000, color=Malware)) + 
-  geom_jitter(shape = 1) + theme(axis.title.x=element_blank())+
-  ggtitle("ROSE")+labs(y = "")
-co_ROSE
 
 #------------------------------------------------------------------#
-#                      FORMANDO LOS MODELOS                        #
+#                      FORMANDO DATASETS                           #
 #------------------------------------------------------------------#
-# Modelo original 
-#--------------------
+Dat2 <- Dat1
+head(Dat2)
+Dat3 <- Dat2[,-2]
+head(Dat3)
+head(Dat3)
+Dat3 <- Dat3[,-1]
+V1 <- Dat3$Minima.Entropía
+V2 <- Dat3$Valor.de.Markov
+Info <- cbind(V1,V2)
+Std <- scale(Info)
+Dat4 <- Dat3
+head(Dat4)
+Dat4$Minima.Entropía <- Std[,1]
+Dat4$Valor.de.Markov <- Std[,2]
+Cor <- cor(V1,V2)
+print(Cor)
+
+i7_2<- createDataPartition(Dat4$Malware, p=0.7, list=FALSE)
+data.train7_2 <- Dat4[ i7_2, ]                         
+data.test7_2  <- Dat4[-i7_2, ] 
+
+
+i8_2<- createDataPartition(Dat4$Malware, p=0.8, list=FALSE)
+data.train8_2 <- Dat4[ i8_2, ]                         
+data.test8_2  <- Dat4[-i8_2, ] 
+
+
+
+
+
+
+
+
+#------------------------------------------------------------------#
+#                       ALGORITMO ADABOOST                         #
+#------------------------------------------------------------------#
+
+set.seed(1437)
+ctrl <- trainControl(method="cv", number=10)
+
+modelo_boost <- train(Malware ~ ., 
+                     data = data.train7_2, 
+                     method = "ada", tuneLength=6,
+                     trControl=ctrl, metric="Accuracy")
+
+plot(modelo_boost)
+modelo_boost$bestTune
+pred_boost <- predict(modelo_boost, newdata=data.test7_2,type="raw")
+confusionMatrix(data= pred_boost, reference= factor(data.test7_2$Malware), positive="Si")
+
+# Predicción correcta y error
+# ---------------------------
+accuracy <- mean(data.train7_2$Malware==pred_boost) ; accuracy
+error <- mean(data.train7_2$Malware!=pred_boost) ; error
+
+# Curva ROC
+# -----------
+pred_boos2 <- predict(modelo_boost, newdata=data.test7_2,type="prob")
+roc.curve(data.test7_2$Malware, pred_boos2[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
+
+# Importancia de Variables
+# -------------------------
+impor=varImp(modelo_boost)
+impor
+plot(impor)
+
+
+
+
+#------------------------------------------------------------------#
+#                      EL ALGORITMO BAGGING                        #
+#------------------------------------------------------------------#
+RNGkind(sample.kind = "Rounding")
+set.seed(100)
+ctrl <- trainControl(method="cv",number=10)
+modelo_bag <- train(Malware ~ ., 
+                    data = data.train7_2, 
+                    method = "treebag",
+                    trControl = ctrl, 
+                    tuneLength = 5, 
+                    metric="Accuracy")
+modelo_bag
+
+pred_bag <- predict(modelo_bag, newdata=data.test7_2,type="raw")
+confusionMatrix(data= pred_bag, reference= as.factor(data.test7_2$Malware), positive="Si")
+
+# Curva ROC
+# -----------
+pred_bag2 <- predict(modelo_bag, newdata=data.test7_2,type="prob")
+roc.curve(data.test7_2$Malware, pred_bag2[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
+
+# Importancia de Variables
+# -------------------------
+impor=varImp(modelo_bag)
+impor
+plot(impor)
+
+
+#------------------------------------------------------------------#
+#                       REGRESIÓN LOGISTICA                        #
+#------------------------------------------------------------------#
+
 set.seed(1437)
 orig.ctrl = trainControl( method = "cv", number = 10 ,
                           classProbs = TRUE,
                           summaryFunction = twoClassSummary)
 
 orig_logist <- train(Malware ~ .,
-                     data = Dat1,
+                     data = data.train7_2,
                      method = "glm",
                      trControl = orig.ctrl,
                      metric = "ROC")
 
-# Modelo down 
-#--------------
-set.seed(1437)
-down.ctrl = trainControl( method = "cv", number = 10 ,
-                          classProbs = TRUE,
-                          summaryFunction = twoClassSummary,
-                          sampling = "down")
-
-down_logist <- train(Malware ~ .,
-                     data = Dat1,
-                     method = "glm",
-                     trControl = down.ctrl,
-                     metric = "ROC")
-# Modelo up   
-#-------------------
-set.seed(1437)
-up.ctrl = trainControl( method = "cv", number = 10 ,
-                        classProbs = TRUE,
-                        summaryFunction = twoClassSummary,
-                        sampling = "up")
-
-up_logist <- train(Malware ~ .,
-                   data = Dat1,
-                   method = "glm",
-                   trControl = up.ctrl,
-                   metric = "ROC")
-
-
-# Modelo rose 
-#-------------
-set.seed(1437)
-rose.ctrl = trainControl( method = "cv", number = 10 ,
-                          classProbs = TRUE,
-                          summaryFunction = twoClassSummary,
-                          sampling = "rose")
-
-rose_logist <- train(Malware ~ .,
-                     data = Dat1,
-                     method = "glm",
-                     trControl = rose.ctrl,
-                     metric = "ROC")
-
-
-# Medidas de precisiÃ³n
-# --------------------
-pred_logist_orig <- predict(orig_logist, newdata=Dat,type="raw")
-confusionMatrix(data= pred_logist_orig, reference= Dat$Malware,positive="Si")
-
-pred_logist_down <- predict(down_logist, newdata=Dat,type="raw")
-confusionMatrix(data= pred_logist_down, reference= Dat$Malware,positive="Si")
-
-pred_logist_up <- predict(up_logist, newdata=Dat,type="raw")
-confusionMatrix(data= pred_logist_up, reference= Dat$Malware,positive="Si")
-
-pred_logist_rose <- predict(rose_logist, newdata=Dat,type="raw")
-confusionMatrix(data= pred_logist_rose, reference= Dat$Malware,positive="Si")
-
-
-
-#------------------------------------------------------------------#
-#           COMPARANDO EL ENTRENAMIENTO DE MODELOS                 #
-#------------------------------------------------------------------#
-modelos  <- list(Original  = orig_logist,
-                 DOWN      = down_logist,
-                 UP        = up_logist,
-                 SMOTE     = smote_logist
-                 )
-
-# COMPARACI?N DE LOS MODELOS EN VALIDACI?N CRUZADA
-# ------------------------------------------------
-comparacion_modelos <- resamples(modelos) 
-summary(comparacion_modelos)
-bwplot(comparacion_modelos,metric = "ROC")
-densityplot(comparacion_modelos, metric = "ROC",auto.key=TRUE)
+pred_logist_orig <- predict(orig_logist, newdata=data.test7_2,type="raw")
+confusionMatrix(data= pred_logist_orig, reference= data.test7_2$Malware,positive="Si")
 
 # Curva ROC
 # -----------
-modelos  <- list(Original  = orig_logist,
-                 DOWN      = down_logist,
-                 UP        = up_logist,
-                 SMOTE     = smote_logist)
-pred_logis1 <- predict(orig_logist, newdata=Dat[,-1],type="prob")
-roc.curve(Dat$Malware, pred_logis1[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
-
-pred_logis2 <- predict(down_logist, newdata=Dat[,-1],type="prob")
-roc.curve(Dat$Malware, pred_logis2[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
-
-pred_logis3 <- predict(up_logist, newdata=Dat[,-1],type="prob")
-roc.curve(Dat$Malware, pred_logis3[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
-
-pred_logis4 <- predict(smote_logist, newdata=Dat[,-1],type="prob")
-roc.curve(Dat$Malware, pred_logis4[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
-
-pred_logis5 <- predict(rose_logist, newdata=Dat[,-1],type="prob")
-roc.curve(Dat$Malware, pred_logis5[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
-
+pred_log2 <- predict(orig_logist, newdata=data.test7_2,type="prob")
+roc.curve(data.test7_2$Malware, pred_log2[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
 
 
 #------------------------------------------------------------------#
-#                  FORMANDO LOS MODELOS de RF                      #
+#                          RANDOM FOREST                           #
 #------------------------------------------------------------------#
-# Modelo original 
-#--------------------
+
 set.seed(1437)
 orig.ctrl = trainControl( method = "cv", number = 10 ,
                           classProbs = TRUE,
                           summaryFunction = twoClassSummary)
 
 orig_rf <- train(Malware ~ .,
-                     data = Dat1,
-                     method = "rf",
-                     trControl = orig.ctrl,
-                     metric = "ROC")
+                 data = data.train7_2,
+                 method = "rf",
+                 trControl = orig.ctrl,
+                 metric = "ROC")
 
-# Modelo down 
-#--------------
-set.seed(1437)
-down.ctrl = trainControl( method = "cv", number = 10 ,
-                          classProbs = TRUE,
-                          summaryFunction = twoClassSummary,
-                          sampling = "down")
+pred_rf_orig <- predict(orig_rf, newdata=data.test7_2,type="raw")
+confusionMatrix(data= pred_rf_orig, reference= data.test7_2$Malware,positive="Si")
 
-down_rf <- train(Malware ~ .,
-                     data = Dat1,
-                     method = "rf",
-                     trControl = down.ctrl,
-                     metric = "ROC")
-# Modelo up   
-#-------------------
-set.seed(1437)
-up.ctrl = trainControl( method = "cv", number = 10 ,
-                        classProbs = TRUE,
-                        summaryFunction = twoClassSummary,
-                        sampling = "up")
+# Curva ROC
+# -----------
+pred_rf2 <- predict(orig_rf, newdata=data.test7_2,type="prob")
+roc.curve(data.test7_2$Malware, pred_rf2[,2],lty=2,lwd=1.8,col="blue" ,main="ROC curves")
 
-up_rf <- train(Malware ~ .,
-                   data = Dat1,
-                   method = "rf",
-                   trControl = up.ctrl,
-                   metric = "ROC")
-
-
-# Modelo rose 
-#-------------
-set.seed(1437)
-rose.ctrl = trainControl( method = "cv", number = 10 ,
-                          classProbs = TRUE,
-                          summaryFunction = twoClassSummary,
-                          sampling = "rose")
-
-rose_rf <- train(Malware ~ .,
-                     data = Dat1,
-                     method = "rf",
-                     trControl = rose.ctrl,
-                     metric = "ROC")
-
-
-# Medidas de precisiÃ³n
-# --------------------
-pred_rf_orig <- predict(orig_rf, newdata=Dat,type="raw")
-confusionMatrix(data= pred_rf_orig, reference= Dat$Malware,positive="Si")
-
-pred_rf_down <- predict(down_rf, newdata=Dat,type="raw")
-confusionMatrix(data= pred_rf_down, reference= Dat$Malware,positive="Si")
-
-pred_rf_up <- predict(up_rf, newdata=Dat,type="raw")
-confusionMatrix(data= pred_rf_up, reference= Dat$Malware,positive="Si")
-
-pred_rf_rose <- predict(rose_rf, newdata=Dat,type="raw")
-confusionMatrix(data= pred_rf_rose, reference= Dat$Malware,positive="Si")
-
-
-
-
-setwd("D:/")
-write.table(rose_train, file = "ROSE.txt", sep = "\t", eol = "\n", dec = ".", row.names = F, col.names = TRUE)
-# Guardar modelo en UCV O DISCO
-
-saveRDS(rose_logist, "./rose_logist.rds")
-# Leer el modelo final
-#---------------------
-super_model <- readRDS("./rose_logist.rds")
-print(super_model)
